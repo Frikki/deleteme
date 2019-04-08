@@ -1,0 +1,30 @@
+{
+  "name": "@helikopter/render-lit-html",
+  "version": "0.1.1",
+  "main": "dist/index.js",
+  "module": "dist/index.m.js",
+  "types": "dist/index.d.ts",
+  "repository": "https://github.com/briancavalier/helikopter",
+  "author": "Brian Cavalier <brian@briancavalier.com>",
+  "license": "MIT",
+  "scripts": {
+    "prepare": "yarn build",
+    "build": "microbundle -f es,cjs",
+    "test": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@helikopter/app": "^0.1.1",
+    "@helikopter/core": "^0.1.0"
+  },
+  "devDependencies": {
+    "lit-html": "1.0.0",
+    "microbundle": "0.11.0",
+    "typescript": "3.3.3333"
+  },
+  "peerDependencies": {
+    "lit-html": "^1.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

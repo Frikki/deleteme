@@ -1,54 +1,85 @@
-import { Cancel, Fiber, Fibers, Fx, handleFibers, killWith, mapTo, run, Update } from '../../src'
-import { renderLitHtml } from '../../src/lit-handler'
+import { Action, action, createApp, Handler, prop, runApp, withEffect, withEffects } from '../../packages/app/src'
+import { Cancel, fibers, Fibers, Fx, kill } from '../../packages/core/src'
+import { renderLitHtml } from '../../packages/render-lit-html/src'
+import { counter, CounterAction } from '../counter/index'
 import { html, TemplateResult } from 'lit-html'
+//-------------------------------------------------------
+// Notice that we're reusing the counter implementation
+// and actions from the simple counter example.  We can
+// use the prop lens to adapt it to work in this new app.
 
-type CounterAction = '+' | '-' | '0' | '+ delay' | '0 delay' | 'none'
+// Next, we'll make a separate "delay counter" app, that
+// increments the counter after a delay.
 
-type CounterState = {
-  count: number,
-  delayed: number
+// Delaying a computation is an effect.  Let's declare the
+// signature and interface for a new Delay effect.  We'll
+// supply the implementation later when we run the app.
+type Delay = {
+  delay: <A> (a: A, ms: number, k: (r: A) => void) => Cancel
 }
 
-const counterView = ({ count, delayed }: CounterState): TemplateResult => html`
-  <p>${count} (delayed: ${delayed})</p>
+const delay = <A>(a: A, ms: number): Fx<Delay, A> =>
+  ({ delay }, k) => delay(a, ms, k)
+
+// The delay counter can initiate a delay, increment the
+// counter after a delay, and cancel all pending delays (i.e.
+// those previously initiated, but which have not yet occurred)
+type DelayCounterAction =
+  | Action<'delay', number>
+  | Action<'incDelay'>
+  | Action<'cancelDelays'>
+
+// Reuse the counter state, but with a new field to track
+// pending delays.
+type DelayCount = { count: number, delayed: number }
+
+// Handle the delay counter action.  This handler needs to
+// use 2 effects: Delay (which we just defined), and Fibers
+// which we can use to kill (cancel) pending delay effects.
+const delayCounter: Handler<Delay & Fibers, DelayCounterAction, DelayCount> = {
+  delay: (c, ms) =>
+    withEffect({ ...c, delayed: c.delayed + 1 }, delay(action('incDelay'), ms)),
+  incDelay: c =>
+    ({ count: c.count + 1, delayed: c.delayed - 1 }),
+  cancelDelays: (c, _, delays) =>
+    withEffects({ ...c, delayed: 0 }, delays.map(kill))
+}
+
+//-------------------------------------------------------
+// Now we need a view to display the counter and delays and
+// to allow the user to interact.
+const view = ({ count, delayed }: DelayCount): TemplateResult => html`
+  <p>count: ${count} (delayed: ${delayed})</p>
   <p>
-    <button @click=${'+'}>+</button>
-    <button @click=${'-'}>-</button>
-    <button @click=${'0'} ?disabled=${count === 0}>Reset Count</button>
-    <button @click=${'+ delay'}>Delay +</button>
-    <button @click=${'0 delay'} ?disabled=${delayed === 0}>Cancel Delays</button>
+    <button @click=${action('inc')}>+</button>
+    <button @click=${action('dec')}>-</button>
+    <button @click=${action('reset')} ?disabled=${count === 0}>Reset</button>
+  </p>
+  <p>
+    <button @click=${action('delay', 1000)}>+ Delay</button>
+    <button @click=${action('cancelDelays')} ?disabled=${ delayed === 0 }>Cancel Delays</button>
   </p>
 `
 
-const counter = (s: CounterState, a: CounterAction, fs: ReadonlyArray<Fiber<CounterAction>>): Update<Delay & Fibers, CounterState, CounterAction> => {
-  switch (a) {
-    case '+': return [{ count: s.count + 1, delayed: fs.length }, []]
-    case '-': return [{ count: s.count - 1, delayed: fs.length }, []]
-    case '0': return [{ count: 0, delayed: fs.length }, []]
-    case '+ delay':
-      const d = mapTo('+' as CounterAction, delay(1000))
-      return [{ ...s, delayed: fs.length + 1 }, [d]]
-    case '0 delay': return [{ ...s, delayed: 0 }, fs.map(f => killWith('none', f))]
-    case 'none': return [s, []]
-  }
-}
+//------------------------------------------------------
+// Compose the counter and delay counter by simply composing
+// their handlers.  The counter operates on type number, so
+// use can use the prop lens to focus it on the count field
+// of DelayCount
+const app = { ...prop('count', counter), ...delayCounter }
 
-type Delay = {
-  delay: (ms: number, k: (r: void) => void) => Cancel
-}
+// Run the app and view, starting with an initial state
+const appFx = createApp(app, view, { count: 0, delayed: 0 })
 
-const delay = (ms: number): Fx<Delay, void> =>
-  ({ delay }, k) => delay(ms, k)
-
-run({
-  update: counter,
-  view: counterView,
-  state: { count: 0, delayed: 0 }
-}, {
-  ...handleFibers,
-  ...renderLitHtml<CounterAction>(document.body),
-  delay: (ms: number, k: (r: void) => void): Cancel => {
-    const t = setTimeout(k, ms)
+// Running the app produces 3 effects: Delay (defined above),
+// Render (rendering the view is an effect!), and Fibers (for
+// canceling pending delays).  To perform the effects,
+// we need to supply their implementations.
+runApp(appFx, {
+  ...fibers,
+  ...renderLitHtml<CounterAction | DelayCounterAction>(document.body),
+  delay: <A>(a: A, ms: number, k: (r: A) => void): Cancel => {
+    const t = setTimeout(k, ms, a)
     return () => clearTimeout(t)
   }
 })
